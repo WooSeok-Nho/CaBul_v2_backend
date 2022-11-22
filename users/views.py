@@ -1,11 +1,21 @@
+import os
+import requests
+from django.shortcuts import redirect
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from django.shortcuts import redirect
 from rest_framework.views import APIView
 from rest_framework import permissions
 from rest_framework import status
+from json import JSONDecodeError
+from django.http import JsonResponse
 from users.models import User
 from django.http import HttpResponseRedirect
+from allauth.socialaccount.models import SocialAccount
+from dj_rest_auth.registration.views import SocialLoginView
+from rest_framework.views import APIView
+from allauth.socialaccount.providers.kakao import views as kakao_view
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from rest_framework.permissions import AllowAny
 from allauth.account.models import EmailConfirmation, EmailConfirmationHMAC
 from users.serializers import UserProfileSerializer, UserUpdateSerializer
@@ -23,6 +33,9 @@ import os
 BASE_URL = 'http://127.0.0.1:8000/'
 KAKAO_CALLBACK_URI = BASE_URL + 'users/kakao/callback/'
 
+
+BASE_URL = 'http://127.0.0.1:8000/'
+KAKAO_CALLBACK_URI = BASE_URL + 'users/kakao/callback/'
 
 class UserView(APIView):
      
@@ -80,16 +93,10 @@ class ConfirmEmailView(APIView): # 이메일 인증
         return qs
 
 
-
-
-##카카오 소셜 로그인
-
-
 def kakao_login(request):
-    rest_api_key = getattr(settings, 'KAKAO_REST_API_KEY')
-    return redirect(
-        f"https://kauth.kakao.com/oauth/authorize?client_id={rest_api_key}&redirect_uri={KAKAO_CALLBACK_URI}&response_type=code"
-    )
+    client_id = os.environ.get("SOCIAL_AUTH_KAKAO_CLIENT_ID")
+    return redirect(f"https://kauth.kakao.com/oauth/authorize?client_id={client_id}&redirect_uri={KAKAO_CALLBACK_URI}&response_type=code&scope=account_email")
+
 def kakao_callback(request):
     client_id = os.environ.get("SOCIAL_AUTH_KAKAO_CLIENT_ID")
     code = request.GET.get("code")
@@ -111,18 +118,21 @@ def kakao_callback(request):
 
     email = kakao_account.get("email", None) # 이메일!
     print(email)
-    """
-    Signup or Signin Request
-    """
+
+
+    # 이메일 없으면 오류 => 카카오톡 최신 버전에서는 이메일 없이 가입 가능해서 추후 수정해야함
+
     try:
         user = User.objects.get(email=email)
         # 기존에 가입된 유저의 Provider가 kakao가 아니면 에러 발생, 맞으면 로그인
         # 다른 SNS로 가입된 유저
-        social_user = SocialAccount.objects.get(user=user)
-        if social_user is None:
-            return JsonResponse({'err_msg': 'email exists but not social user'}, status=status.HTTP_400_BAD_REQUEST)
-        if social_user.provider != 'kakao':
-            return JsonResponse({'err_msg': 'no matching social type'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # social_user = SocialAccount.objects.get(user=user)
+        # if social_user is None:
+        #     return JsonResponse({'err_msg': 'email exists but not social user'}, status=status.HTTP_400_BAD_REQUEST)
+        # if social_user.provider != 'kakao':
+        #     return JsonResponse({'err_msg': 'no matching social type'}, status=status.HTTP_400_BAD_REQUEST)
+
         # 기존에 Google로 가입된 유저
         data = {'access_token': access_token, 'code': code}
         accept = requests.post(
@@ -133,6 +143,7 @@ def kakao_callback(request):
         accept_json = accept.json()
         accept_json.pop('user', None)
         return JsonResponse(accept_json)
+
     except User.DoesNotExist:
         # 기존에 가입된 유저가 없으면 새로 가입
         data = {'access_token': access_token, 'code': code}
@@ -145,6 +156,7 @@ def kakao_callback(request):
         accept_json = accept.json()
         accept_json.pop('user', None)
         return JsonResponse(accept_json)
+
 class KakaoLogin(SocialLoginView):
     adapter_class = kakao_view.KakaoOAuth2Adapter
     client_class = OAuth2Client
